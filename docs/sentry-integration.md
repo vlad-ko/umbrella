@@ -4,24 +4,47 @@ This document provides a comprehensive overview of Sentry integration across the
 
 ## Table of Contents
 1. [Overview](#overview)
-2. [Backend Services](#backend-services)
+2. [Integration Strategy](#integration-strategy)
+3. [Backend Services](#backend-services)
    - [codecov-api](#codecov-api)
    - [worker](#worker)
-3. [Frontend (Gazebo)](#frontend-gazebo)
-4. [OAuth/SSO Integration](#oauthsso-integration)
-5. [CLI Integration](#cli-integration)
-6. [Configuration Reference](#configuration-reference)
-7. [Security & Privacy](#security--privacy)
-8. [Development Setup](#development-setup)
+4. [Frontend (Gazebo)](#frontend-gazebo)
+5. [Critical Experiences Monitoring](#critical-experiences-monitoring)
+6. [Performance Monitoring](#performance-monitoring)
+7. [OAuth/SSO Integration](#oauthsso-integration)
+8. [CLI Integration](#cli-integration)
+9. [Configuration Reference](#configuration-reference)
+10. [Security & Privacy](#security--privacy)
+11. [Development Setup](#development-setup)
 
 ## Overview
 
 Codecov uses Sentry for:
 - **Error Tracking**: Capturing and monitoring application errors across all services
 - **Performance Monitoring**: Tracking application performance and identifying bottlenecks
+- **Critical Experiences**: Monitoring business-critical user journeys with revenue impact
 - **Session Replay**: Recording user sessions for debugging (frontend only)
 - **User Authentication**: Supporting Sentry as an OAuth provider for SSO
 - **Distributed Tracing**: Tracking requests across multiple services
+- **Business Intelligence**: Connecting technical metrics to business outcomes
+
+## Integration Strategy
+
+Codecov employs a **dual-layer monitoring approach**:
+
+### 1. Foundation Layer: Comprehensive Performance Monitoring
+- Track all operations across services
+- Maintain technical SLOs
+- Provide debugging context
+- Monitor infrastructure health
+
+### 2. Focus Layer: Critical Experiences
+- Identify business-critical user journeys
+- Add revenue and customer context
+- Enable proactive customer success
+- Prioritize fixes by business impact
+
+This blended approach ensures technical excellence while protecting business outcomes.
 
 ## Backend Services
 
@@ -378,10 +401,115 @@ Backend services use `EventScrubber` with a deny list that includes:
 5. **Scoping**: Use error boundary scopes to categorize errors
 6. **User Feedback**: Enable feedback widgets for better user communication
 
+## Critical Experiences Monitoring
+
+### Defined Critical Experiences
+
+1. **Upload Processing** (Revenue Protection)
+   - Monitor: Processing time, success rate, queue depth
+   - Business Impact: Failed uploads → customer churn
+   - Key Segments: Enterprise, high-volume users, trials
+
+2. **PR Comment Generation** (User Satisfaction)
+   - Monitor: Time to comment, accuracy, formatting
+   - Business Impact: Poor experience → team abandonment
+   - Key Segments: Active teams, OSS projects
+
+3. **First Upload Experience** (Growth)
+   - Monitor: Time to first success, error types
+   - Business Impact: Failed activation → lost conversion
+   - Key Segments: Trial users, new signups
+
+4. **Dashboard Performance** (Retention)
+   - Monitor: Load times, data freshness
+   - Business Impact: Slow dashboards → renewal risk
+   - Key Segments: Enterprise, decision makers
+
+### Implementation Example
+
+```python
+@CriticalExperienceMonitor.track_critical_experience(
+    "upload_processing",
+    organization=upload.repository.author
+)
+@PerformanceMonitor.track_operation("process_upload")
+def process_upload(upload_id: str):
+    # Dual monitoring: technical + business
+    pass
+```
+
+## Performance Monitoring
+
+### Technical Metrics Tracked
+
+1. **Service Level Indicators**
+   - Request latency (p50, p95, p99)
+   - Error rates by endpoint
+   - Database query performance
+   - Cache hit rates
+
+2. **Infrastructure Metrics**
+   - CPU and memory usage
+   - Queue depths
+   - Network latency
+   - Disk I/O
+
+3. **Application Metrics**
+   - Upload processing stages
+   - Coverage calculation time
+   - Report generation speed
+   - API response times
+
+### Distributed Tracing
+
+Full request lifecycle tracking across:
+- Gazebo (frontend) → API → Worker → External services
+- Includes baggage propagation for context
+- Automatic span creation for key operations
+
 ## Monitoring & Debugging
+
+### Dashboards
+
+1. **Technical Dashboards** (Engineering)
+   - System performance overview
+   - Service health metrics
+   - Error analysis and trends
+   - Infrastructure monitoring
+
+2. **Business Dashboards** (Leadership & Customer Success)
+   - Revenue impact analysis
+   - Customer experience health
+   - Trial conversion metrics
+   - Churn risk indicators
+
+3. **Operational Dashboards** (Support)
+   - Active issues by customer tier
+   - Recent errors with context
+   - Performance degradation alerts
+
+### Alerting Strategy
+
+1. **Critical Alerts** (Page on-call)
+   - Enterprise customer failures
+   - System-wide outages
+   - Security incidents
+
+2. **High Priority** (Notify team)
+   - Trial user activation issues
+   - Performance SLO breaches
+   - Error rate spikes
+
+3. **Informational** (Dashboard/Slack)
+   - Trending issues
+   - Capacity warnings
+   - Non-critical errors
+
+### Debugging Tools
 
 1. **Sentry Dashboard**: Monitor errors, performance, and replays
 2. **Distributed Tracing**: Track requests across services
 3. **Session Replays**: Debug user issues with recorded sessions
 4. **Performance Profiling**: Identify bottlenecks in both frontend and backend
 5. **Release Health**: Track error rates across releases
+6. **Custom Queries**: Analyze specific customer segments or experiences
