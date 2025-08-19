@@ -84,16 +84,24 @@ def process_upload(upload_id: str):
 ### Concrete Examples
 
 #### Example 1: Upload Processing Error
-```python
-# Before: Error in logs, hard to diagnose
-ERROR: Failed to process upload 12345
 
-# After: Rich error in Sentry
+**Current Implementation:**
+```python
+# Error appears in logs with minimal context
+ERROR: Failed to process upload 12345
+# Developer has to search through logs, find the upload, check database
+```
+
+**Enhancement Proposal:**
+```python
+# Rich error in Sentry with automatic context
 Error: InvalidCoverageFormat
 User: enterprise-customer-xyz (Enterprise Plan)
 Upload: 12345, 2.5MB, coverage.xml
 Stack trace with full context
 ```
+
+**Why:** Currently, debugging requires manual correlation across logs, database queries, and external services. The enhancement automatically captures all relevant context at the point of error, reducing MTTR from hours to minutes.
 
 #### Example 2: API Rate Limit Error
 ```python
@@ -212,6 +220,17 @@ def process_upload(self, upload_id, **kwargs):
 ### Concrete Examples
 
 #### Example 1: Slow Upload Diagnosis
+
+**Current Implementation:**
+```
+# Manual investigation required:
+- Check API logs for slow requests
+- Check worker logs for processing time
+- No visibility into which stage is slow
+- No connection between CLI → API → Worker
+```
+
+**Enhancement Proposal:**
 ```
 Trace: Upload Coverage (12.5s total)
 ├─ CI: upload sent by CLI (0.1s)
@@ -226,7 +245,21 @@ Trace: Upload Coverage (12.5s total)
 Bottleneck identified: Parsing large XML file
 ```
 
+**Why:** Currently, performance issues require manual correlation across multiple service logs with no visibility into sub-operation timing. Distributed tracing provides automatic end-to-end visibility, immediately highlighting the bottleneck (XML parsing) without manual investigation.
+
 #### Example 2: External Service Timeout
+
+**Current Implementation:**
+```
+# Worker logs show timeout after 30s
+ERROR: Request to GitHub timed out
+# No visibility into:
+- Which customers are affected
+- How long GitHub has been slow
+- If it's a pattern or isolated incident
+```
+
+**Enhancement Proposal:**
 ```
 Trace: PR Comment Creation (timeout after 30s)
 ├─ Worker: Generate comment (2.1s)
@@ -235,6 +268,8 @@ Trace: PR Comment Creation (timeout after 30s)
 
 Alert: GitHub API degradation affecting enterprise customers
 ```
+
+**Why:** Current implementation only shows the timeout in logs without context about customer impact or service degradation patterns. The enhancement immediately shows which external service is failing and can trigger alerts for affected enterprise customers.
 
 ### Business Wins
 
@@ -352,6 +387,19 @@ def process_upload(upload_id: str):
 ### Concrete Examples
 
 #### Example 1: Enterprise Upload Failure Impact
+
+**Current Implementation:**
+```
+# Error in worker logs
+ERROR: Upload 12345 failed - parsing timeout
+# Manual process:
+1. Support ticket comes in hours later
+2. Engineer searches logs
+3. Identifies customer manually
+4. No automatic escalation
+```
+
+**Enhancement Proposal:**
 ```
 Alert: Critical Experience Failed
 Journey: Upload Processing
@@ -360,6 +408,8 @@ Error: Coverage parsing timeout
 Impact: CI/CD pipeline blocked
 Action: Page on-call engineer + notify customer success
 ```
+
+**Why:** Currently, high-value customer issues are discovered reactively through support tickets. The enhancement proactively identifies revenue impact and automatically escalates based on customer value, enabling intervention before the customer complains.
 
 #### Example 2: Onboarding Drop-off
 ```
@@ -491,6 +541,17 @@ def process_large_coverage_file(file_path: str):
 ### Concrete Examples
 
 #### Example 1: Memory Leak Detection
+
+**Current Implementation:**
+```python
+# No visibility into memory usage patterns
+# Issues discovered only when:
+- Worker OOMs and crashes
+- Performance degrades significantly
+- Manual profiling during incident
+```
+
+**Enhancement Proposal:**
 ```python
 # Continuous profiling catches memory growth
 Profile: process_upload memory usage
@@ -500,7 +561,21 @@ Profile: process_upload memory usage
 - Heap snapshot shows: Cached XML parsers not released
 ```
 
+**Why:** Currently, memory leaks are only discovered during production incidents. Continuous profiling detects gradual memory growth before it impacts customers, with automatic heap snapshots pinpointing the exact cause.
+
 #### Example 2: Database Query Optimization
+
+**Current Implementation:**
+```
+# Slow API responses with no visibility into why
+# Investigation requires:
+- Enabling Django debug toolbar locally
+- Adding manual query logging
+- Reproducing with production data
+- No visibility into query patterns
+```
+
+**Enhancement Proposal:**
 ```
 Transaction: fetch_repository_coverage
 ├─ API Handler (50ms)
@@ -514,6 +589,8 @@ Transaction: fetch_repository_coverage
 Fix: Add .prefetch_related('commits')
 Result: 900ms → 100ms (90% improvement)
 ```
+
+**Why:** Current debugging requires reproducing issues locally with production-like data. The enhancement automatically identifies N+1 queries in production with exact query counts and timing, making the fix obvious without time-consuming investigation.
 
 ### Business Wins
 
