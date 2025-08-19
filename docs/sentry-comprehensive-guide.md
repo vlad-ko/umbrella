@@ -6,6 +6,23 @@ This document provides a phased implementation guide for Sentry integration acro
 
 Our Sentry implementation follows a phased approach, prioritizing immediate business value with minimal performance impact. Each phase builds upon the previous, allowing us to validate benefits before increasing complexity.
 
+### Current Implementation Status
+
+After reviewing the codebase, Codecov has a foundation of Sentry integration but with key gaps:
+
+**What's Working Well:**
+- ✅ Error tracking with basic context (repo, owner, commit)
+- ✅ Performance monitoring enabled (but needs optimization)
+- ✅ Frontend has session replay and profiling
+- ✅ Infrastructure for distributed tracing exists
+
+**Critical Gaps:**
+- ❌ No business context (customer value, revenue impact)
+- ❌ Distributed tracing not actually connected between services
+- ❌ Worker has 100% sampling (performance risk!)
+- ❌ No differentiation between enterprise and free customers
+- ❌ Missing proactive alerting for high-value customers
+
 ### Phase Overview
 - **Phase 1**: Error Tracking & Basic Monitoring - Immediate visibility, zero performance impact
 - **Phase 2**: Distributed Tracing - End-to-end visibility, minimal overhead
@@ -29,9 +46,18 @@ Our Sentry implementation follows a phased approach, prioritizing immediate busi
 **Performance Impact**: Zero (errors are already happening)  
 **Business Value**: Immediate visibility into production issues
 
-### What We're Building
+### Current State
 
-Basic Sentry integration for error tracking across all services. This provides immediate value with zero performance overhead since we're only capturing errors that are already occurring.
+✅ **Already Implemented**:
+- Error tracking across all services (API, Worker, Frontend)
+- Basic context via LogContext (task, owner, repo, commit info)
+- Sensitive data scrubbing
+- Frontend error filtering and feature flag integration
+
+⚠️ **Missing**:
+- Business context (customer value, revenue impact)
+- Upload-specific details (file size, type, processing stage)
+- Proactive alerting based on customer tier
 
 ### Implementation
 
@@ -87,21 +113,35 @@ def process_upload(upload_id: str):
 
 **Current Implementation:**
 ```python
-# Error appears in logs with minimal context
-ERROR: Failed to process upload 12345
-# Developer has to search through logs, find the upload, check database
+# BaseCodecovTask already sets context via LogContext:
+- task_name, task_id
+- owner_username, owner_service, owner_plan, owner_id
+- repo_name, repo_id
+- commit_sha
+# These are automatically added as Sentry tags
 ```
 
 **Enhancement Proposal:**
 ```python
-# Rich error in Sentry with automatic context
-Error: InvalidCoverageFormat
-User: enterprise-customer-xyz (Enterprise Plan)
-Upload: 12345, 2.5MB, coverage.xml
-Stack trace with full context
+# Add business-specific context for uploads
+sentry_sdk.set_context("upload", {
+    "id": upload_id,
+    "state": upload.state,
+    "file_size": upload.file_size,
+    "file_type": upload.file_type,
+    "provider": upload.provider,
+    "error_code": upload.error_code if upload.state == "error" else None,
+})
+
+sentry_sdk.set_context("business_impact", {
+    "mrr": organization.monthly_revenue,
+    "is_enterprise": organization.plan == "enterprise",
+    "seats": organization.activated_users.count(),
+    "critical_path": True,  # Upload is always critical
+})
 ```
 
-**Why:** Currently, debugging requires manual correlation across logs, database queries, and external services. The enhancement automatically captures all relevant context at the point of error, reducing MTTR from hours to minutes.
+**Why:** While we have basic context (repo, owner, commit), we lack upload-specific details and business impact. Adding file size, type, and revenue context helps prioritize issues affecting high-value customers or specific file types that commonly fail.
 
 #### Example 2: API Rate Limit Error
 ```python
@@ -128,14 +168,38 @@ def check_github_api():
 - **No sampling**: Errors are rare events, capture 100%
 - **Async sending**: Errors sent in background, non-blocking
 
+### Immediate Action Required
+
+⚠️ **Worker Service has 100% sampling** - This needs immediate attention:
+
+```python
+# Current (DANGEROUS for production):
+traces_sample_rate=1.0  # 100%
+profiles_sample_rate=1.0  # 100%
+
+# Recommended immediate fix:
+traces_sample_rate=float(os.environ.get("SERVICES__SENTRY__SAMPLE_RATE", "0.01"))  # 1%
+profiles_sample_rate=float(os.environ.get("SERVICES__SENTRY__PROFILES_SAMPLE_RATE", "0.001"))  # 0.1%
+```
+
 ## Phase 2: Distributed Tracing
 
 **Performance Impact**: <0.1% with smart sampling  
 **Business Value**: End-to-end visibility across services
 
-### What We're Building
+### Current State
 
-Distributed tracing connects the dots between Gazebo (frontend) → API → Worker → External services. This is crucial for diagnosing issues that span multiple services.
+✅ **Already Implemented**:
+- Tracing enabled in all services
+- CORS headers configured for trace propagation
+- `@sentry_sdk.trace` decorators on many functions
+- Celery integration with `propagate_traces=True`
+
+⚠️ **Missing**:
+- Actual trace propagation between services
+- Frontend doesn't send trace headers to API
+- API doesn't propagate traces to Worker
+- No connection between user action → API → Worker
 
 ### Implementation
 
@@ -452,9 +516,19 @@ CRITICAL_EXPERIENCE_CRITERIA = {
 **Performance Impact**: 0.1-2% depending on sampling  
 **Business Value**: Deep performance insights for optimization
 
-### What We're Building
+### Current State
 
-Now that we have error tracking, tracing, and critical journeys, we add comprehensive performance monitoring. This phase has the most potential overhead, so we're very selective.
+✅ **Already Implemented**:
+- Performance monitoring enabled (but with high sampling rates)
+- Worker: 100% traces, 100% profiles (too high!)
+- API: 10% traces, 1% profiles
+- Custom performance helpers in `sentry_metrics.py`
+
+⚠️ **Missing**:
+- Adaptive sampling based on load
+- Business context in performance data
+- Detailed span tracking within operations
+- Performance baselines and SLOs
 
 ### Implementation
 
@@ -626,9 +700,19 @@ class AdaptiveSampler:
 **Performance Impact**: Variable, feature-specific  
 **Business Value**: Premium insights and predictive capabilities
 
-### What We're Building
+### Current State
 
-Advanced Sentry features that provide deep insights but require careful implementation due to potential overhead.
+✅ **Already Implemented**:
+- Session replay in frontend (configurable sampling)
+- Browser profiling integration
+- Spotlight for local development
+- LaunchDarkly integration
+
+⚠️ **Missing**:
+- Smart sampling based on customer value
+- Predictive analytics
+- Custom business dashboards
+- Proactive alerting
 
 ### Features
 
