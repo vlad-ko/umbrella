@@ -1,731 +1,852 @@
 # Sentry Integration Comprehensive Guide
 
-This document provides a complete guide to Sentry integration across Codecov's services, combining performance monitoring with business-critical experience tracking.
+This document provides a phased implementation guide for Sentry integration across Codecov's services, ordered from high-value/low-impact to more complex features.
+
+## Executive Summary
+
+Our Sentry implementation follows a phased approach, prioritizing immediate business value with minimal performance impact. Each phase builds upon the previous, allowing us to validate benefits before increasing complexity.
+
+### Phase Overview
+- **Phase 1**: Error Tracking & Basic Monitoring - Immediate visibility, zero performance impact
+- **Phase 2**: Distributed Tracing - End-to-end visibility, minimal overhead
+- **Phase 3**: Critical User Journeys - Business metrics, targeted monitoring
+- **Phase 4**: Performance Monitoring - Deep insights, controlled sampling
+- **Phase 5**: Advanced Features - Session replay, profiling, predictive analytics
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Integration Strategy](#integration-strategy)
-3. [Architecture](#architecture)
-4. [Implementation Guide](#implementation-guide)
-   - [Performance Monitoring Layer](#performance-monitoring-layer)
-   - [Critical Experiences Layer](#critical-experiences-layer)
-   - [Unified Approach](#unified-approach)
-5. [Service Integrations](#service-integrations)
-   - [Backend Services](#backend-services)
-   - [Frontend (Gazebo)](#frontend-gazebo)
-   - [CLI Tools](#cli-tools)
-6. [Dashboards and Visualizations](#dashboards-and-visualizations)
-   - [Technical Dashboards](#technical-dashboards)
-   - [Business Dashboards](#business-dashboards)
-   - [Upload Performance Dashboard](#upload-performance-dashboard)
-7. [Alerting and Monitoring](#alerting-and-monitoring)
-8. [Configuration Reference](#configuration-reference)
-9. [Development Setup](#development-setup)
-10. [Best Practices](#best-practices)
-11. [Implementation Timeline](#implementation-timeline)
+1. [Phase 1: Error Tracking & Basic Monitoring](#phase-1-error-tracking--basic-monitoring)
+2. [Phase 2: Distributed Tracing](#phase-2-distributed-tracing)
+3. [Phase 3: Critical User Journeys](#phase-3-critical-user-journeys)
+4. [Phase 4: Performance Monitoring](#phase-4-performance-monitoring)
+5. [Phase 5: Advanced Features](#phase-5-advanced-features)
+6. [Performance Overhead Analysis](#performance-overhead-analysis)
+7. [Configuration Reference](#configuration-reference)
+8. [Success Metrics](#success-metrics)
 
-## Overview
+## Phase 1: Error Tracking & Basic Monitoring
 
-Codecov uses Sentry for comprehensive monitoring that combines:
+**Performance Impact**: Zero (errors are already happening)  
+**Business Value**: Immediate visibility into production issues
 
-### Technical Excellence
-- **Error Tracking**: Capturing and monitoring application errors across all services
-- **Performance Monitoring**: Tracking application performance and identifying bottlenecks
-- **Distributed Tracing**: Following requests across multiple services
-- **Infrastructure Health**: Monitoring system resources and dependencies
+### What We're Building
 
-### Business Intelligence
-- **Critical Experiences**: Monitoring business-critical user journeys with revenue impact
-- **Customer Context**: Adding business value to technical metrics
-- **Proactive Support**: Enabling customer success interventions before churn
-- **ROI Tracking**: Connecting technical performance to business outcomes
+Basic Sentry integration for error tracking across all services. This provides immediate value with zero performance overhead since we're only capturing errors that are already occurring.
 
-## Integration Strategy
+### Implementation
 
-Codecov employs a **dual-layer monitoring approach**:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Critical Experiences Layer                │
-│  (Business Context, Revenue Impact, Customer Success Alerts) │
-├─────────────────────────────────────────────────────────────┤
-│                 Performance Monitoring Layer                 │
-│    (Traces, Spans, Metrics, SLOs, Technical Dashboards)    │
-├─────────────────────────────────────────────────────────────┤
-│                    Infrastructure Layer                      │
-│        (Distributed Tracing, Error Tracking, Logs)         │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Foundation Layer: Comprehensive Performance Monitoring
-- Track all operations across services
-- Maintain technical SLOs
-- Provide debugging context
-- Monitor infrastructure health
-
-### Focus Layer: Critical Experiences
-- Identify business-critical user journeys
-- Add revenue and customer context
-- Enable proactive customer success
-- Prioritize fixes by business impact
-
-## Architecture
-
-### Current State Limitations
-1. **Limited Performance Tracking** - Basic error tracking without comprehensive metrics
-2. **No Distributed Tracing** - Missing trace propagation between services
-3. **Insufficient Granularity** - Monolithic operation tracking
-4. **No Business Context** - Technical metrics disconnected from business impact
-
-### Target Architecture
-
-#### Enhanced Upload Performance Tracking
-```python
-# Key metrics to track:
-- upload.total_duration
-- upload.stage.{stage_name}.duration
-- upload.file_size
-- upload.coverage_lines
-- upload.notification.latency
-- upload.queue_time
-```
-
-#### Distributed Tracing Flow
-```mermaid
-graph LR
-    A[Gazebo Frontend] -->|Trace Context| B[codecov-api]
-    B -->|Trace Context| C[Celery Task Queue]
-    C -->|Trace Context| D[Worker Process]
-    D -->|Trace Context| E[GitHub/GitLab API]
-    D -->|Trace Context| F[Database]
-    D -->|Trace Context| G[Redis Cache]
-```
-
-## Implementation Guide
-
-### Performance Monitoring Layer
+#### 1.1 Basic Setup (All Services)
 
 ```python
-# apps/worker/helpers/performance_monitoring.py
-
-from contextvars import ContextVar
-from typing import Optional
+# Worker service example
 import sentry_sdk
-from sentry_sdk import set_measurement, set_tag
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.django import DjangoIntegration
 
-class PerformanceMonitor:
-    """
-    Base performance monitoring for all operations.
-    Provides technical metrics and traces.
-    """
-    
-    @staticmethod
-    def track_operation(
-        operation_name: str,
-        operation_type: str = "task",
-        capture_performance: bool = True
-    ):
-        """Decorator for basic performance tracking"""
-        def decorator(func):
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                with sentry_sdk.start_transaction(
-                    op=f"{operation_type}.{operation_name}",
-                    name=operation_name,
-                    sampled=capture_performance
-                ) as transaction:
-                    # Set basic technical context
-                    set_tag("operation.type", operation_type)
-                    set_tag("operation.name", operation_name)
-                    
-                    # Track technical metrics
-                    start_time = time.time()
-                    start_memory = get_memory_usage()
-                    
-                    try:
-                        result = func(*args, **kwargs)
-                        set_tag("operation.status", "success")
-                        return result
-                    except Exception as e:
-                        set_tag("operation.status", "error")
-                        set_tag("error.type", type(e).__name__)
-                        raise
-                    finally:
-                        # Record technical measurements
-                        duration = time.time() - start_time
-                        memory_delta = get_memory_usage() - start_memory
-                        
-                        set_measurement("operation.duration", duration, "second")
-                        set_measurement("operation.memory_delta", memory_delta, "byte")
-            
-            return wrapper
-        return decorator
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    environment=os.getenv("CODECOV_ENV", "production"),
+    release=get_current_version(),
+    # Start with NO performance monitoring
+    traces_sample_rate=0,  # We'll enable this in Phase 4
+    integrations=[
+        DjangoIntegration(),
+        CeleryIntegration(),
+    ],
+)
 ```
 
-### Critical Experiences Layer
+#### 1.2 Enhanced Error Context
 
 ```python
-# apps/worker/helpers/critical_experiences.py
-
-from enum import Enum
-from typing import Dict, Any
-import sentry_sdk
-from sentry_sdk import set_tag, set_context, set_measurement
-
-class CriticalExperience(Enum):
-    UPLOAD_PROCESSING = "upload_processing"
-    PR_COMMENT = "pr_comment_generation"
-    FIRST_UPLOAD = "first_time_upload"
-    DASHBOARD_LOAD = "enterprise_dashboard"
-    COVERAGE_REPORT = "coverage_report_generation"
-
-class CriticalExperienceTracker:
-    """
-    Track critical user experiences with business context
-    """
-    
-    def __init__(self, experience: CriticalExperience, organization: Owner):
-        self.experience = experience
-        self.organization = organization
-        self.transaction = None
+# Add business context to errors
+def process_upload(upload_id: str):
+    try:
+        upload = get_upload(upload_id)
         
-    def __enter__(self):
-        # Start transaction with business context
-        self.transaction = sentry_sdk.start_transaction(
-            op=f"critical_experience.{self.experience.value}",
-            name=f"Critical Experience: {self.experience.value}",
-            sampled=True  # Always sample critical experiences
-        )
-        self.transaction.__enter__()
-        
-        # Add business context
-        self._add_business_context()
-        
-        return self
-    
-    def _add_business_context(self):
-        """Add business-relevant context to the transaction"""
-        # Organization context
-        set_context("organization", {
-            "id": self.organization.ownerid,
-            "name": self.organization.username,
-            "plan": self.organization.plan,
-            "value_tier": self._calculate_value_tier(),
-            "is_trial": self.organization.trial_status == "ongoing",
-            "activated_users": len(self.organization.activated_users or []),
-            "repo_count": self.organization.repos.count(),
+        # Add context that helps support
+        sentry_sdk.set_context("upload", {
+            "id": upload_id,
+            "repository": upload.repository.name,
+            "owner": upload.repository.author.username,
+            "plan": upload.repository.author.plan,
+            "file_size": upload.file_size,
         })
         
-        # Business impact tags
-        set_tag("experience.type", self.experience.value)
-        set_tag("customer.tier", self._get_customer_tier())
-        set_tag("revenue.impact", self._calculate_revenue_impact())
-        set_tag("churn.risk", self._calculate_churn_risk())
+        # Process upload...
+        
+    except Exception as e:
+        # Sentry automatically captures with context
+        sentry_sdk.capture_exception(e)
+        raise
 ```
 
-### Unified Approach
+### Concrete Examples
+
+#### Example 1: Upload Processing Error
+```python
+# Before: Error in logs, hard to diagnose
+ERROR: Failed to process upload 12345
+
+# After: Rich error in Sentry
+Error: InvalidCoverageFormat
+User: enterprise-customer-xyz (Enterprise Plan)
+Upload: 12345, 2.5MB, coverage.xml
+Stack trace with full context
+```
+
+#### Example 2: API Rate Limit Error
+```python
+# Automatically captured with context
+@sentry_sdk.monitor(monitor_slug="github-api-health")
+def check_github_api():
+    with sentry_sdk.set_context("api_check", {
+        "remaining_quota": github.rate_limit.remaining,
+        "reset_time": github.rate_limit.reset,
+    }):
+        # API calls that might fail
+```
+
+### Business Wins
+
+1. **Reduced MTTR**: From hours to minutes for error diagnosis
+2. **Proactive Support**: Alert enterprise customers before they complain
+3. **Engineering Efficiency**: Stop diving through logs
+4. **Customer Trust**: "We've already identified the issue and are working on it"
+
+### Performance Considerations
+
+- **Zero overhead**: Only captures errors that are already happening
+- **No sampling**: Errors are rare events, capture 100%
+- **Async sending**: Errors sent in background, non-blocking
+
+## Phase 2: Distributed Tracing
+
+**Performance Impact**: <0.1% with smart sampling  
+**Business Value**: End-to-end visibility across services
+
+### What We're Building
+
+Distributed tracing connects the dots between Gazebo (frontend) → API → Worker → External services. This is crucial for diagnosing issues that span multiple services.
+
+### Implementation
+
+#### 2.1 Enable Tracing with Smart Sampling
 
 ```python
-# Example: Upload processing with both layers
-
-@PerformanceMonitor.track_operation("upload_task", capture_performance=True)
-@CriticalExperienceMonitor.track_critical_experience(
-    "upload_processing",
-    organization=lambda self, *args, **kwargs: self.get_organization(kwargs),
-    add_business_context=lambda self, *args, **kwargs: self.is_critical_org(kwargs)
+# API Service
+sentry_sdk.init(
+    # ... existing config ...
+    traces_sample_rate=0.01,  # Start with 1% baseline
+    traces_sampler=smart_sampler,  # Custom sampling logic
 )
-def process_upload(self, upload_id: str, **kwargs):
-    """
-    Process upload with both technical performance monitoring
-    and business impact tracking for critical organizations.
-    """
-    upload = self.get_upload(upload_id)
+
+def smart_sampler(sampling_context):
+    """Smart sampling based on operation importance"""
     
-    # Technical performance tracking
-    with PerformanceMonitor.track_span("parse_coverage"):
-        coverage_data = self.parse_coverage(upload)
+    # Always trace errors
+    if sampling_context.get("error"):
+        return 1.0
     
-    # Critical experience checkpoints for important customers
-    if self.is_critical_org(upload.repository.author):
-        with CriticalExperienceMonitor.checkpoint("coverage_processing", {
-            "file_count": len(coverage_data.files),
-            "line_count": coverage_data.total_lines,
-        }):
-            report = self.process_coverage(coverage_data)
-    else:
-        with PerformanceMonitor.track_span("process_coverage"):
-            report = self.process_coverage(coverage_data)
+    # Sample by transaction type
+    transaction_name = sampling_context.get("transaction_context", {}).get("name", "")
     
-    return report
+    # Critical paths - higher sampling
+    if "upload" in transaction_name:
+        return 0.05  # 5% for uploads
+    elif "webhook" in transaction_name:
+        return 0.1   # 10% for webhooks
+    
+    # Default low sampling
+    return 0.001  # 0.1% for everything else
 ```
 
-## Service Integrations
-
-### Backend Services
-
-#### codecov-api
-
-**Location**: `apps/codecov-api/codecov/settings_base.py`
+#### 2.2 Cross-Service Tracing
 
 ```python
-SENTRY_ENV = os.environ.get("CODECOV_ENV", None)
-SENTRY_DSN = os.environ.get("SERVICES__SENTRY__SERVER_DSN", None)
-SENTRY_DENY_LIST = DEFAULT_DENYLIST + ["_headers", "token_to_use"]
+# Frontend (Gazebo)
+const transaction = Sentry.startTransaction({
+  name: "upload-coverage",
+  op: "user-action",
+});
 
-if SENTRY_DSN is not None:
-    SENTRY_SAMPLE_RATE = float(os.environ.get("SERVICES__SENTRY__SAMPLE_RATE", "0.1"))
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        event_scrubber=EventScrubber(denylist=SENTRY_DENY_LIST),
-        _experiments={
-            "enable_logs": True,
-        },
-        integrations=[
-            DjangoIntegration(signals_spans=False),
-            CeleryIntegration(),
-            RedisIntegration(cache_prefixes=["cache:"]),
-            HttpxIntegration(),
-        ],
-        environment=SENTRY_ENV,
-        traces_sample_rate=SENTRY_SAMPLE_RATE,
-        profiles_sample_rate=float(
-            os.environ.get("SERVICES__SENTRY__PROFILE_SAMPLE_RATE", "0.01")
-        ),
+// Set on hub for all requests
+Sentry.getCurrentHub().configureScope(scope => scope.setSpan(transaction));
+
+// API call automatically includes trace headers
+const response = await api.post('/upload', data);
+
+transaction.finish();
+```
+
+```python
+# API receives trace and continues it
+@sentry_sdk.trace
+def upload_handler(request):
+    # Automatically continues trace from frontend
+    
+    # Create worker task with trace propagation
+    task = process_upload.delay(
+        upload_id,
+        headers={
+            "sentry-trace": request.headers.get("sentry-trace"),
+            "baggage": request.headers.get("baggage"),
+        }
     )
 ```
 
-#### worker
-
-**Location**: `apps/worker/helpers/sentry.py`
-
 ```python
-def initialize_sentry() -> None:
-    version = get_current_version()
-    version_str = f"worker-{version}"
-    sentry_dsn = get_config("services", "sentry", "server_dsn")
-    sentry_sdk.init(
-        sentry_dsn,
-        sample_rate=float(os.getenv("SENTRY_PERCENTAGE", "1.0")),
-        environment=os.getenv("DD_ENV", "production"),
-        traces_sample_rate=float(os.environ.get("SERVICES__SENTRY__SAMPLE_RATE", "1")),
-        profiles_sample_rate=float(
-            os.environ.get("SERVICES__SENTRY__PROFILES_SAMPLE_RATE", "1")
-        ),
-        _experiments={"enable_logs": True},
-        integrations=[
-            CeleryIntegration(monitor_beat_tasks=True),
-            DjangoIntegration(signals_spans=False),
-            SqlalchemyIntegration(),
-            RedisIntegration(cache_prefixes=["cache:"]),
-            HttpxIntegration(),
-        ],
-        release=os.getenv("SENTRY_RELEASE", version_str),
-    )
+# Worker continues the trace
+@shared_task(bind=True)
+@sentry_sdk.trace
+def process_upload(self, upload_id, **kwargs):
+    # Trace continues from API
+    
+    with sentry_sdk.start_span(op="parse-coverage"):
+        coverage = parse_coverage_file()
+    
+    with sentry_sdk.start_span(op="store-results"):
+        store_to_database(coverage)
 ```
 
-### Frontend (Gazebo)
+### Concrete Examples
 
-**Location**: `src/sentry.ts`
+#### Example 1: Slow Upload Diagnosis
+```
+Trace: Upload Coverage (12.5s total)
+├─ CI: upload sent by CLI (0.1s)
+├─ API: Validate upload (0.5s)
+├─ API: Create upload record (0.2s)
+├─ Worker: Process upload (11.5s) ⚠️
+│  ├─ Parse coverage file (8.2s) ⚠️ SLOW
+│  ├─ Calculate diff (2.1s)
+│  └─ Store results (1.2s)
+└─ API: Return response (0.2s)
 
-```typescript
-export const setupSentry = ({
-  history,
-}: {
-  history: ReturnType<typeof createBrowserHistory>
-}) => {
-  Sentry.init({
-    dsn: config.SENTRY_DSN,
-    debug: config.SENTRY_ENVIRONMENT !== 'production',
-    environment: config.SENTRY_ENVIRONMENT,
-    integrations: [
-      Sentry.replayIntegration(),
-      Sentry.browserProfilingIntegration(),
-      Sentry.reactRouterV5BrowserTracingIntegration({ history }),
-      Sentry.thirdPartyErrorFilterIntegration({
-        filterKeys: ['gazebo'],
-        behaviour: 'apply-tag-if-contains-third-party-frames',
-      }),
-      Sentry.launchDarklyIntegration(),
-      ...(config.NODE_ENV === 'development'
-        ? [Sentry.spotlightBrowserIntegration()]
-        : []),
-    ],
-    tracePropagationTargets,
-    tracesSampleRate: config?.SENTRY_TRACING_SAMPLE_RATE,
-    replaysSessionSampleRate: config?.SENTRY_SESSION_SAMPLE_RATE,
-    replaysOnErrorSampleRate: config?.SENTRY_ERROR_SAMPLE_RATE,
-    profilesSampleRate: config?.SENTRY_PROFILING_SAMPLE_RATE,
-    beforeSend: filterBlockedUserAgents,
-    beforeSendTransaction: filterBlockedUserAgents,
-  })
+Bottleneck identified: Parsing large XML file
+```
+
+#### Example 2: External Service Timeout
+```
+Trace: PR Comment Creation (timeout after 30s)
+├─ Worker: Generate comment (2.1s)
+├─ Worker: Post to GitHub (30s) ❌ TIMEOUT
+│  └─ HTTP POST api.github.com (no response)
+
+Alert: GitHub API degradation affecting enterprise customers
+```
+
+### Business Wins
+
+1. **Faster Debugging**: See exactly where time is spent
+2. **External Service Monitoring**: Know when GitHub/GitLab/Bitbucket are slow
+3. **Customer Impact**: Trace shows which customers are affected
+4. **Performance Optimization**: Data-driven decisions on what to optimize
+
+### Performance Considerations
+
+```python
+# Sampling configuration for minimal overhead
+TRACING_CONFIG = {
+    # Transaction-specific sampling
+    "api.upload": 0.05,      # 5% - important but not critical
+    "worker.process": 0.01,  # 1% - high volume
+    "api.webhook": 0.1,      # 10% - lower volume, critical
+    "frontend.pageload": 0.001,  # 0.1% - very high volume
+    
+    # Always sample these conditions
+    "always_sample": [
+        "enterprise_customer",
+        "error_status",
+        "slow_transaction",  # >5s
+    ]
 }
 ```
 
-#### Frontend Distributed Tracing
+## Phase 3: Critical User Journeys
 
-```typescript
-// Propagate trace context in GraphQL requests
-const tracingLink = new ApolloLink((operation, forward) => {
-  const span = Sentry.getCurrentHub().getScope()?.getSpan();
-  if (span) {
-    operation.setContext({
-      headers: {
-        'sentry-trace': span.toTraceparent(),
-        'baggage': span.toBaggage(),
-      },
-    });
+**Performance Impact**: <0.5% for targeted monitoring  
+**Business Value**: Connect technical metrics to revenue impact
+
+### What We're Building
+
+Monitor the user journeys that directly impact revenue and retention. We're not monitoring everything - just the experiences that matter most to the business.
+
+### Critical Journeys for Codecov
+
+1. **Upload Processing** - Core value proposition
+2. **PR Comment Generation** - Key integration point
+3. **Coverage Report Viewing** - Primary user interaction
+4. **Repository Onboarding** - First impression
+5. **Enterprise SSO Login** - Enterprise customer access
+
+### Implementation
+
+#### 3.1 Define Critical Experience Class
+
+```python
+class CriticalExperience:
+    """Track business-critical user journeys"""
+    
+    def __init__(self, name: str, organization: Owner):
+        self.name = name
+        self.organization = organization
+        self.transaction = sentry_sdk.start_transaction(
+            op=f"critical.{name}",
+            name=f"Critical Experience: {name}",
+            sampled=True  # Always sample critical experiences
+        )
+        self._add_business_context()
+    
+    def _add_business_context(self):
+        """Add revenue and business context"""
+        sentry_sdk.set_context("business", {
+            "organization_id": self.organization.ownerid,
+            "plan": self.organization.plan,
+            "mrr": self.organization.stripe_customer.mrr if self.organization.stripe_customer else 0,
+            "seats": self.organization.activated_users.count(),
+            "repos": self.organization.repos.count(),
+            "is_trial": self.organization.trial_status == "ongoing",
+            "churn_risk": self._calculate_churn_risk(),
+        })
+        
+        # Tag for easy filtering
+        sentry_sdk.set_tag("customer.tier", self._get_tier())
+        sentry_sdk.set_tag("revenue.impact", "high" if self.organization.plan == "enterprise" else "standard")
+```
+
+#### 3.2 Implement for Upload Processing
+
+```python
+@shared_task
+def process_upload(upload_id: str):
+    upload = get_upload(upload_id)
+    org = upload.repository.author
+    
+    # Only track critical experiences for paying customers
+    if org.plan in ["pro", "enterprise"]:
+        with CriticalExperience("upload_processing", org) as experience:
+            experience.set_measurement("upload.size", upload.file_size)
+            experience.set_measurement("upload.lines", upload.line_count)
+            
+            # Track each stage
+            with experience.track_stage("parse"):
+                coverage = parse_coverage(upload)
+            
+            with experience.track_stage("calculate_diff"):
+                diff = calculate_diff(coverage)
+            
+            with experience.track_stage("notify"):
+                send_notifications(upload, diff)
+            
+            # Business outcome
+            experience.set_outcome(
+                "success",
+                revenue_impact=org.stripe_customer.mrr if hasattr(org, 'stripe_customer') else 0
+            )
+    else:
+        # Regular processing without heavy instrumentation
+        _process_upload_basic(upload_id)
+```
+
+### Concrete Examples
+
+#### Example 1: Enterprise Upload Failure Impact
+```
+Alert: Critical Experience Failed
+Journey: Upload Processing
+Customer: Microsoft (Enterprise - $50k MRR)
+Error: Coverage parsing timeout
+Impact: CI/CD pipeline blocked
+Action: Page on-call engineer + notify customer success
+```
+
+#### Example 2: Onboarding Drop-off
+```
+Critical Experience: Repository Onboarding
+Customer: Acme Corp (Trial - High Intent)
+Stage Completed: GitHub App Installed ✓
+Stage Failed: First Upload ✗
+Time to Failure: 45 minutes
+Action: Customer success outreach with setup help
+```
+
+### Business Wins
+
+1. **Revenue Protection**: Know immediately when high-value customers have issues
+2. **Churn Prevention**: Catch problems before customers complain
+3. **Customer Success**: Proactive outreach for struggling customers
+4. **Product Insights**: Which features drive value for which segments
+
+### Performance Considerations
+
+```python
+# Only monitor what matters
+CRITICAL_EXPERIENCE_CRITERIA = {
+    "monitor_if": [
+        "plan in ['pro', 'enterprise']",  # Paying customers
+        "trial_status == 'ongoing'",       # Active trials
+        "repos.count() > 10",              # High usage
+        "mrr > 1000",                      # High value
+    ],
+    "skip_if": [
+        "plan == 'free'",                  # Free users
+        "repos.count() == 0",              # No activity
+        "created_at < 30_days_ago",        # Too new
+    ]
+}
+```
+
+## Phase 4: Performance Monitoring
+
+**Performance Impact**: 0.1-2% depending on sampling  
+**Business Value**: Deep performance insights for optimization
+
+### What We're Building
+
+Now that we have error tracking, tracing, and critical journeys, we add comprehensive performance monitoring. This phase has the most potential overhead, so we're very selective.
+
+### Implementation
+
+#### 4.1 Selective Performance Monitoring
+
+```python
+# Worker service with performance monitoring
+sentry_sdk.init(
+    # ... existing config ...
+    traces_sample_rate=0.01,  # Still low baseline
+    profiles_sample_rate=0.001,  # Very selective profiling
+    _experiments={
+        "continuous_profiling_auto_start": True,
+    },
+)
+
+# Custom performance monitoring decorator
+def monitor_performance(
+    sample_rate: float = 0.01,
+    profile_rate: float = 0.001,
+    alert_threshold_ms: float = 5000
+):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Decide if we should monitor this execution
+            should_monitor = random.random() < sample_rate
+            should_profile = random.random() < profile_rate
+            
+            if not should_monitor:
+                return func(*args, **kwargs)
+            
+            # Start transaction with optional profiling
+            with sentry_sdk.start_transaction(
+                op=f"task.{func.__name__}",
+                name=func.__name__,
+                sampled=True,
+            ) as transaction:
+                if should_profile:
+                    profiler = sentry_sdk.start_profiler()
+                
+                start_time = time.time()
+                try:
+                    result = func(*args, **kwargs)
+                    return result
+                finally:
+                    duration = (time.time() - start_time) * 1000
+                    
+                    # Alert on slow operations
+                    if duration > alert_threshold_ms:
+                        sentry_sdk.capture_message(
+                            f"Slow operation: {func.__name__} took {duration:.0f}ms",
+                            level="warning",
+                        )
+                    
+                    if should_profile and profiler:
+                        profiler.stop()
+        
+        return wrapper
+    return decorator
+```
+
+#### 4.2 Targeted Metrics Collection
+
+```python
+# Only collect metrics for specific operations
+@monitor_performance(
+    sample_rate=0.05,  # 5% sampling for uploads
+    profile_rate=0.001,  # 0.1% profiling
+    alert_threshold_ms=10000  # Alert if >10s
+)
+def process_large_coverage_file(file_path: str):
+    with sentry_sdk.start_span(op="parse.xml") as span:
+        span.set_data("file_size", os.path.getsize(file_path))
+        tree = parse_xml(file_path)
+    
+    with sentry_sdk.start_span(op="process.coverage") as span:
+        coverage = extract_coverage(tree)
+        span.set_data("line_count", len(coverage.lines))
+    
+    return coverage
+```
+
+### Concrete Examples
+
+#### Example 1: Memory Leak Detection
+```python
+# Continuous profiling catches memory growth
+Profile: process_upload memory usage
+- Start: 150MB
+- After 100 uploads: 450MB ⚠️
+- Growth rate: 3MB per upload
+- Heap snapshot shows: Cached XML parsers not released
+```
+
+#### Example 2: Database Query Optimization
+```
+Transaction: fetch_repository_coverage
+├─ API Handler (50ms)
+├─ DB: SELECT repos (20ms)
+├─ DB: SELECT commits (800ms) ⚠️ N+1 Query
+│   ├─ Query 1: commit_sha=abc... (8ms)
+│   ├─ Query 2: commit_sha=def... (8ms)
+│   └─ ... 98 more queries
+└─ Response serialization (30ms)
+
+Fix: Add .prefetch_related('commits')
+Result: 900ms → 100ms (90% improvement)
+```
+
+### Business Wins
+
+1. **Cost Optimization**: Identify and fix resource waste
+2. **User Experience**: Faster operations = happier customers
+3. **Capacity Planning**: Know when to scale before issues
+4. **Engineering Productivity**: Data-driven optimization
+
+### Performance Considerations
+
+```python
+# Adaptive sampling based on system load
+class AdaptiveSampler:
+    def __init__(self):
+        self.base_rate = 0.01
+        self.current_rate = self.base_rate
+    
+    def should_sample(self) -> bool:
+        # Reduce sampling under high load
+        cpu_usage = psutil.cpu_percent()
+        if cpu_usage > 80:
+            self.current_rate = self.base_rate * 0.1  # 10% of base
+        elif cpu_usage > 60:
+            self.current_rate = self.base_rate * 0.5  # 50% of base
+        else:
+            self.current_rate = self.base_rate
+        
+        return random.random() < self.current_rate
+```
+
+## Phase 5: Advanced Features
+
+**Performance Impact**: Variable, feature-specific  
+**Business Value**: Premium insights and predictive capabilities
+
+### What We're Building
+
+Advanced Sentry features that provide deep insights but require careful implementation due to potential overhead.
+
+### Features
+
+#### 5.1 Session Replay (Frontend Only)
+
+```javascript
+// Gazebo configuration
+Sentry.init({
+  // ... existing config ...
+  replaysSessionSampleRate: 0.001,  // 0.1% of sessions
+  replaysOnErrorSampleRate: 1.0,     // 100% when errors occur
+  
+  // Only replay for specific user segments
+  beforeSendReplay(event, hint) {
+    const user = Sentry.getCurrentHub().getScope().getUser();
+    
+    // Always replay for enterprise users with issues
+    if (user?.plan === 'enterprise' && event.error_count > 0) {
+      return event;
+    }
+    
+    // Sample others based on value
+    if (user?.plan === 'pro' && Math.random() < 0.01) {
+      return event;
+    }
+    
+    // Skip free users
+    return null;
   }
-  return forward(operation);
 });
 ```
 
-### CLI Tools
+#### 5.2 Predictive Alerts
 
-**Location**: `prevent-cli/codecov-cli/codecov_cli/opentelemetry.py`
-
-Basic integration for CLI tools with simple error tracking and performance monitoring.
-
-## Dashboards and Visualizations
-
-### Technical Dashboards
-
-#### System Performance Overview
-```yaml
-widgets:
-  - title: "Upload Processing Performance (All)"
-    query: "p50(operation.duration), p95(operation.duration), p99(operation.duration)"
-    display: "line"
-  
-  - title: "Service Latency Breakdown"
-    query: "avg(span.duration) by span.op"
-    display: "bar"
-  
-  - title: "Error Rate by Service"
-    query: "count(operation.status:error) / count() by service"
-    display: "percentage"
-  
-  - title: "Database Query Performance"
-    query: "p95(db.query.duration) by query.type"
-    display: "table"
-```
-
-### Business Dashboards
-
-#### Revenue Protection Dashboard
-```yaml
-widgets:
-  - title: "Enterprise Customer Experience Health"
-    query: |
-      count(operation.status:error) 
-      customer.tier:enterprise 
-      group by organization_name
-    display: "table"
-  
-  - title: "Revenue at Risk (Failed Critical Experiences)"
-    query: |
-      sum(customer.monthly_value)
-      critical_experience:*
-      operation.status:error
-      time.range:24h
-    display: "big_number"
-    unit: "USD"
-  
-  - title: "High-Value Customer Upload Failures"
-    query: |
-      critical_experience.upload_processing
-      revenue.impact:critical OR revenue.impact:high
-      experience.outcome:failure
-    display: "table"
-    columns: ["organization.name", "failure.type", "count()"]
-```
-
-### Upload Performance Dashboard
-
-#### Real-time Monitoring
-```yaml
-title: "Upload Processing Monitor"
-widgets:
-  - title: "Current Queue Depth"
-    query: "last(celery.queue.size) where queue.name:upload"
-    display: "big_number"
-    refresh: "30s"
-  
-  - title: "Upload Success Rate (5m)"
-    query: |
-      (count(upload.status:success) / count(upload.status:*)) * 100
-      time.window:5m
-    display: "percentage"
-    thresholds:
-      - value: 99
-        color: "green"
-      - value: 95
-        color: "yellow"
-      - value: 90
-        color: "red"
-  
-  - title: "Processing Time by Upload Size"
-    query: |
-      p95(upload.duration) by upload.size_category
-      time.window:1h
-    display: "bar"
-    categories: ["small", "medium", "large", "xlarge"]
-```
-
-#### Historical Analysis
-```yaml
-widgets:
-  - title: "Upload Performance Trends"
-    query: |
-      p50(upload.duration), p95(upload.duration), p99(upload.duration)
-      time.range:7d
-      interval:1h
-    display: "line"
-  
-  - title: "Stage Performance Breakdown"
-    query: |
-      avg(upload.stage.duration) by stage.name
-      time.range:24h
-    display: "stacked_bar"
-    stages:
-      - "parse_coverage"
-      - "validate_data"
-      - "process_coverage"
-      - "generate_report"
-      - "notify_services"
-```
-
-## Alerting and Monitoring
-
-### Tiered Alert Configuration
-
-#### Critical Alerts (Page On-Call)
 ```python
-{
-    "name": "Enterprise Customer Upload Failure",
-    "conditions": [
-        "critical_experience.upload_processing",
-        "experience.outcome:failure",
-        "customer.tier:enterprise",
-    ],
-    "threshold": 1,  # Any failure for enterprise
-    "action": "page_on_call",
-    "metadata": {
-        "include_customer_value": True,
-        "include_support_history": True,
+# Use historical data for predictive monitoring
+class PredictiveMonitor:
+    def analyze_upload_patterns(self, org_id: int):
+        # Get historical performance data from Sentry
+        metrics = sentry_sdk.get_metrics(
+            organization_id=org_id,
+            metric="upload.duration",
+            period="30d"
+        )
+        
+        # Detect anomalies
+        if self.is_degrading(metrics):
+            # Proactive alert before customer notices
+            alert_customer_success(
+                org_id,
+                "Upload performance degrading - investigate before impact"
+            )
+```
+
+#### 5.3 Custom Dashboards
+
+```python
+# Business-specific Sentry dashboards
+CUSTOM_DASHBOARDS = {
+    "customer_health": {
+        "widgets": [
+            {
+                "title": "Revenue at Risk",
+                "query": "sum(revenue_impact) by error_type",
+                "display": "big_number"
+            },
+            {
+                "title": "Enterprise Customer Errors",
+                "query": "count() by organization where plan:enterprise",
+                "display": "table"
+            }
+        ]
+    },
+    "upload_performance": {
+        "widgets": [
+            {
+                "title": "P95 Upload Time by Plan",
+                "query": "p95(upload.duration) by plan",
+                "display": "line"
+            }
+        ]
     }
 }
 ```
 
-#### High Priority (Notify Team)
+### Business Wins
+
+1. **Visual Debugging**: See exactly what users did before errors
+2. **Predictive Maintenance**: Fix issues before they impact customers
+3. **Executive Dashboards**: Business metrics in real-time
+4. **AI-Powered Insights**: Sentry's ML features for anomaly detection
+
+## Performance Overhead Analysis
+
+### Summary by Phase
+
+| Phase | Feature | Performance Impact | Mitigation Strategy |
+|-------|---------|-------------------|---------------------|
+| 1 | Error Tracking | 0% | Errors already happening |
+| 2 | Distributed Tracing | <0.1% | Smart sampling (1-5%) |
+| 3 | Critical Journeys | <0.5% | Only paying customers |
+| 4 | Performance Monitoring | 0.1-2% | Adaptive sampling |
+| 5 | Advanced Features | Variable | Feature-specific controls |
+
+### Detailed Analysis
+
+#### Memory Overhead
 ```python
-{
-    "name": "High Churn Risk Performance Degradation",
-    "conditions": [
-        "churn.risk:high OR churn.risk:critical",
-        "experience.degraded:true",
-    ],
-    "threshold": 3,
-    "window": "5m",
-    "action": "notify_customer_success",
-}
+# Baseline memory usage
+- Sentry SDK: ~5MB
+- Transaction buffer: ~10MB (configurable)
+- Span buffer: ~5MB per 1000 spans
+- Total: ~20MB typical, 50MB peak
+
+# Mitigation
+sentry_sdk.init(
+    max_breadcrumbs=50,  # Limit breadcrumb memory
+    max_value_length=1024,  # Limit string sizes
+    before_send=filter_large_events,  # Drop oversized events
+)
 ```
 
-#### Informational (Dashboard/Slack)
+#### CPU Overhead
 ```python
-{
-    "name": "Upload Queue Backup",
-    "conditions": [
-        "celery.queue.size > 1000",
-        "queue.name:upload",
-    ],
-    "window": "10m",
-    "action": "slack_notification",
-}
+# Measured overhead by operation
+- Error capture: <1ms
+- Span creation: ~0.01ms
+- Transaction start: ~0.1ms
+- Profiling: 2-5% when active
+
+# Critical path optimization
+if is_critical_path:
+    # Skip all monitoring
+    return process_without_sentry()
 ```
 
-### SLO Monitoring
-
+#### Network Overhead
 ```python
-SLO_DEFINITIONS = {
-    "upload_processing": {
-        "small": {"p95": 60, "p99": 120},
-        "medium": {"p95": 180, "p99": 300},
-        "large": {"p95": 300, "p99": 600},
-    },
-    "pr_comment_generation": {
-        "all": {"p95": 15, "p99": 30},
-    },
-    "dashboard_load": {
-        "all": {"p95": 2, "p99": 5},
-    },
-}
+# Async sending with batching
+sentry_sdk.init(
+    transport=HTTPTransport(
+        batch_size=100,  # Batch events
+        timeout=5,  # Don't block on sending
+        num_pools=2,  # Parallel sending
+    )
+)
 ```
 
 ## Configuration Reference
 
 ### Environment Variables
 
-#### Backend Services
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SERVICES__SENTRY__SERVER_DSN` | Sentry DSN for backend services | None |
-| `CODECOV_ENV` | Environment name | None |
-| `SERVICES__SENTRY__SAMPLE_RATE` | Trace sampling rate | 0.1 (api), 1.0 (worker) |
-| `SERVICES__SENTRY__PROFILE_SAMPLE_RATE` | Profile sampling rate | 0.01 (api), 1.0 (worker) |
-| `CLUSTER_ENV` | Cluster identifier for tagging | None |
+```bash
+# Core Configuration
+SENTRY_DSN=https://xxx@sentry.io/xxx
+CODECOV_ENV=production
+SENTRY_RELEASE=v1.2.3
 
-#### Frontend (Gazebo)
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `REACT_APP_SENTRY_DSN` | Sentry DSN for frontend | None |
-| `REACT_APP_SENTRY_ENVIRONMENT` | Environment name | "staging" |
-| `REACT_APP_SENTRY_TRACING_SAMPLE_RATE` | Trace sampling rate | 1.0 |
-| `REACT_APP_SENTRY_PROFILING_SAMPLE_RATE` | Profile sampling rate | 0.1 |
-| `REACT_APP_SENTRY_SESSION_SAMPLE_RATE` | Session replay sampling | 0.1 |
-| `REACT_APP_SENTRY_ERROR_SAMPLE_RATE` | Error session replay sampling | 1.0 |
+# Sampling Rates (per phase)
+# Phase 1: Errors only
+SENTRY_ERROR_SAMPLE_RATE=1.0
 
-### Sampling Strategy
+# Phase 2: Distributed tracing
+SENTRY_TRACES_SAMPLE_RATE=0.01
 
-```python
-def get_sample_rate(organization, operation_type):
-    """Dynamic sampling based on business value and operation type"""
-    
-    # Critical experiences always sampled
-    if operation_type == "critical_experience":
-        if organization.is_enterprise:
-            return 1.0  # 100% for enterprise
-        elif organization.is_trial:
-            return 0.5  # 50% for trials
-        else:
-            return 0.2  # 20% for standard
-    
-    # Regular operations
-    if organization.is_enterprise:
-        return 0.5  # 50% for enterprise
-    elif organization.churn_risk == "high":
-        return 0.3  # 30% for at-risk
-    else:
-        return 0.1  # 10% baseline
+# Phase 3: Critical experiences  
+SENTRY_CRITICAL_EXPERIENCE_RATE=1.0
+SENTRY_CRITICAL_CUSTOMER_TIERS=enterprise,pro
+
+# Phase 4: Performance monitoring
+SENTRY_PROFILES_SAMPLE_RATE=0.001
+SENTRY_PERFORMANCE_SAMPLE_RATE=0.05
+
+# Phase 5: Advanced features
+SENTRY_REPLAY_SESSION_RATE=0.001
+SENTRY_REPLAY_ERROR_RATE=1.0
 ```
 
-## Development Setup
-
-### Local Development
-
-1. **Backend Services**
-   ```bash
-   export SERVICES__SENTRY__SERVER_DSN="your-dsn-here"
-   export CODECOV_ENV="development-$USER"
-   ```
-
-2. **Frontend**
-   ```bash
-   # .env.local
-   REACT_APP_SENTRY_DSN=your-dsn-here
-   REACT_APP_SENTRY_ENVIRONMENT=development-$USER
-   ```
-
-3. **Spotlight Integration** (Local Debugging)
-   - Automatically enabled in development
-   - View traces at http://localhost:8969/
-
-### Testing
+### Service-Specific Configuration
 
 ```python
-# Disable Sentry in tests
-@pytest.fixture(autouse=True)
-def disable_sentry(monkeypatch):
-    monkeypatch.setenv("SERVICES__SENTRY__SERVER_DSN", "")
+# API Service
+SENTRY_CONFIG = {
+    "dsn": os.getenv("SENTRY_DSN"),
+    "environment": os.getenv("CODECOV_ENV"),
+    "traces_sample_rate": 0.01,
+    "profiles_sample_rate": 0.001,
+    "integrations": [
+        DjangoIntegration(
+            transaction_style="endpoint",
+            middleware_spans=False,  # Reduce overhead
+        ),
+    ],
+}
+
+# Worker Service
+SENTRY_CONFIG = {
+    "dsn": os.getenv("SENTRY_DSN"),
+    "environment": os.getenv("CODECOV_ENV"),
+    "traces_sample_rate": 0.005,  # Lower for high-volume
+    "profiles_sample_rate": 0.0001,  # Very selective
+    "integrations": [
+        CeleryIntegration(
+            monitor_beat_tasks=True,
+            propagate_traces=True,
+        ),
+    ],
+}
+
+# Frontend (Gazebo)
+SENTRY_CONFIG = {
+    dsn: process.env.REACT_APP_SENTRY_DSN,
+    environment: process.env.REACT_APP_ENV,
+    tracesSampleRate: 0.001,  // Very low for frontend
+    replaysSessionSampleRate: 0.0001,
+    replaysOnErrorSampleRate: 1.0,
+}
 ```
-
-## Best Practices
-
-### 1. Context is King
-Always add relevant context to help with debugging and business decisions:
-```python
-set_context("upload_details", {
-    "file_count": len(files),
-    "total_lines": sum(f.lines for f in files),
-    "upload_size": upload.size,
-    "ci_provider": upload.ci_provider,
-})
-```
-
-### 2. Use Structured Tags
-Follow consistent naming conventions:
-- `customer.*` - Customer/organization attributes
-- `experience.*` - Experience tracking
-- `operation.*` - Technical operation details
-- `business.*` - Business impact metrics
-
-### 3. Measure What Matters
-Focus on metrics that drive decisions:
-```python
-# Good: Actionable metric
-set_measurement("time_to_first_byte", ttfb, "second")
-
-# Better: Business-connected metric
-set_measurement("revenue_at_risk", calculate_mrr(affected_orgs), "usd")
-```
-
-### 4. Smart Sampling
-Balance visibility with cost:
-- 100% sampling for critical experiences
-- Higher rates for valuable customers
-- Baseline sampling for general monitoring
-
-### 5. Actionable Alerts
-Every alert should have:
-- Clear ownership (who gets paged?)
-- Defined response (what do they do?)
-- Business context (why does it matter?)
-
-## Implementation Timeline
-
-### Phase 1: Foundation (Weeks 1-2)
-- [x] Document comprehensive plan
-- [ ] Implement base PerformanceMonitor
-- [ ] Deploy to staging with technical dashboards
-- [ ] Validate distributed tracing
-
-### Phase 2: Critical Experiences (Weeks 3-4)
-- [ ] Implement CriticalExperienceMonitor
-- [ ] Add business context enrichment
-- [ ] Create business dashboards
-- [ ] Set up customer success alerts
-
-### Phase 3: Integration (Weeks 5-6)
-- [ ] Connect to CRM for customer data
-- [ ] Implement dynamic sampling
-- [ ] Train teams on new dashboards
-- [ ] Document runbooks for alerts
-
-### Phase 4: Optimization (Ongoing)
-- [ ] Refine critical experience definitions
-- [ ] A/B test performance improvements
-- [ ] Measure business impact
-- [ ] Expand to additional experiences
 
 ## Success Metrics
 
-### Technical Metrics
-- Reduce MTTR by 50%
-- Achieve 99.9% SLO compliance
-- Decrease debugging time by 40%
+### Phase 1 Success Criteria
+- [ ] All services sending errors to Sentry
+- [ ] Zero performance degradation confirmed
+- [ ] First error resolved using Sentry context
+- [ ] Alert routing configured for critical errors
 
-### Business Metrics
-- Prevent 2-3 enterprise churns per quarter
-- Increase trial conversion by 10%
-- Reduce support tickets by 30%
-- Save $2M+ annually in prevented churn
+**Metric**: MTTR reduced by 50%
+
+### Phase 2 Success Criteria
+- [ ] End-to-end traces visible
+- [ ] External service latency identified
+- [ ] First cross-service issue diagnosed
+- [ ] Performance overhead <0.1%
+
+**Metric**: Cross-service debugging time reduced by 75%
+
+### Phase 3 Success Criteria
+- [ ] Critical journeys instrumented
+- [ ] Customer success team has dashboard access
+- [ ] First proactive customer outreach
+- [ ] Revenue impact metrics visible
+
+**Metric**: Customer-reported issues reduced by 30%
+
+### Phase 4 Success Criteria
+- [ ] Performance baselines established
+- [ ] First optimization from profiling data
+- [ ] Database query improvements identified
+- [ ] Overhead remains <2% at P99
+
+**Metric**: P95 latency improved by 20%
+
+### Phase 5 Success Criteria
+- [ ] Session replay catching UX issues
+- [ ] Predictive alerts preventing outages
+- [ ] Executive dashboard in use
+- [ ] ROI demonstrated
+
+**Metric**: Engineering efficiency improved by 40%
+
+## Executive Dashboard
+
+### Key Business Metrics
+
+```python
+# Weekly executive report from Sentry data
+def generate_executive_report():
+    return {
+        "revenue_at_risk": sum_errors_by_mrr(period="7d"),
+        "enterprise_health": {
+            "affected_customers": count_affected_enterprise(),
+            "error_rate": enterprise_error_rate(),
+            "performance_slo": enterprise_slo_status(),
+        },
+        "engineering_efficiency": {
+            "mttr": mean_time_to_resolve(),
+            "errors_prevented": proactive_fixes_count(),
+            "performance_wins": optimization_impact(),
+        },
+        "roi_metrics": {
+            "support_tickets_prevented": estimate_prevented_tickets(),
+            "engineering_hours_saved": calculate_time_savings(),
+            "customer_retention_impact": churn_prevention_value(),
+        }
+    }
+```
 
 ## Conclusion
 
-This comprehensive Sentry integration provides Codecov with:
-- **Technical Excellence**: Full visibility into system performance
-- **Business Intelligence**: Direct connection to revenue and growth
-- **Proactive Support**: Early warning for customer success
-- **Smart Prioritization**: Focus resources where they matter most
+This phased approach ensures:
+1. **Immediate value** with zero risk (Phase 1)
+2. **Progressive enhancement** based on proven value
+3. **Minimal overhead** through smart sampling
+4. **Business alignment** with revenue-focused metrics
+5. **Flexibility** to adjust based on results
 
-By implementing this blended approach, Codecov can maintain high technical standards while protecting and growing the business through focused monitoring of critical customer experiences.
+Each phase builds on the previous, allowing us to validate value before increasing complexity or overhead.
